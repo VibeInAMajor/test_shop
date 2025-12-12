@@ -1,0 +1,6 @@
+{
+  "dried_apricots": { "name": "Курага", "price_uah_per_100g": 150 },
+  "prunes": { "name": "Чернослив", "price_uah_per_100g": 130 },
+  "walnuts": { "name": "Грецкий орех", "price_uah_per_100g": 200 },
+  "almonds": { "name": "Миндаль", "price_uah_per_100g": 260 }
+}

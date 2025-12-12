@@ -14,8 +14,14 @@ app.js
 */
 
 const tg = window.Telegram.WebApp;
+function getQueryParam(name) {
+  return new URL(window.location.href).searchParams.get(name);
+}
+
 tg.expand();
 tg.ready();
+
+
 
 const products = [
   // Сухофрукты
@@ -55,7 +61,8 @@ const products = [
 // корзина: {id: {id, name, price, qty}}
 const cart = {};
 
-const CART_KEY = "shop_cart_v1";
+const session = getQueryParam("session") ?? "default";
+const CART_KEY = `shop_cart_v1_${session}`;
 
 function saveCart() {
   try {

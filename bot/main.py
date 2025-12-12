@@ -13,8 +13,14 @@ main.py
 - При успешной оплате отправляет пользователю подтверждение с суммой заказа.
 """
 
+import time
+
+t0 = time.perf_counter()
+print(f"[LOG] Start: imports begin at {t0:.6f}")
+
 import asyncio
 import json
+import uuid
 from typing import Dict
 
 from aiogram import Bot, Dispatcher, F
@@ -24,11 +30,23 @@ from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
     KeyboardButton,
+    InlineKeyboardMarkup, 
+    InlineKeyboardButton,
     WebAppInfo,
+    MenuButtonWebApp,
     LabeledPrice,
     PreCheckoutQuery,
     SuccessfulPayment,
 )
+import socket
+import aiohttp
+from aiogram.client.session.aiohttp import AiohttpSession
+import logging
+logging.basicConfig(level=logging.INFO)
+from pathlib import Path
+
+t1 = time.perf_counter()
+print(f"[LOG] Imports finished: {t1:.6f}, delta={t1 - t0:.6f} sec")
 
 # ====== НАСТРОЙКИ ======
 BOT_TOKEN = "8473584829:AAHsD3ls_zCT9Lem9nyO7RggmvPgALVaWXg"  # токен бота от BotFather
@@ -37,101 +55,101 @@ WEBAPP_URL = "https://vibeinamajor.github.io/test_shop/"  # URL мини-при�
 # provider_token ты берёшь у Portmone после подключения к Telegram Payments
 PAYMENT_PROVIDER_TOKEN = "1661751239:TEST:w6K6-h7hL-75hI-9QwO"
 
-# Цены товаров (копейки, для Telegram Payments)
-PRICE_TABLE: Dict[str, int] = {
-    "dried_apricots": 150_00,  # 150 грн
-    "prunes": 130_00,          # 130 грн
-    "walnuts": 200_00,         # 200 грн
-    "almonds": 260_00,         # 260 грн
-}
+CATALOG_PATH = Path(__file__).with_name("catalog.json")
+
 
 dp = Dispatcher()
+
+class IPv4AiohttpSession(AiohttpSession):
+    def __init__(self, *args, **kwargs):
+        # обычная инициализация AiohttpSession
+        super().__init__(*args, **kwargs)
+        # подмешиваем настройку для TCPConnector: только IPv4
+        self._connector_init["family"] = socket.AF_INET
 
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    """
-    Обработчик /start: отправляет кнопку "Store", открывающую WebApp.
-    """
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add(
-        KeyboardButton(
-            text="Store",
-            web_app=WebAppInfo(url=WEBAPP_URL)
-        )
+    session_id = uuid.uuid4().hex
+    web_url = f"{WEBAPP_URL}?session={session_id}&v=2"
+
+    await message.bot.set_chat_menu_button(
+        chat_id=message.chat.id,
+        menu_button=MenuButtonWebApp(
+            text="Магазин",
+            web_app=WebAppInfo(url=web_url),
+        ),
     )
 
-    await message.answer(
-        "Привет! Нажми кнопку <b>Store</b>, чтобы открыть мини-магазин.",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML,
-    )
+    await message.answer("Открой магазин через кнопку «Магазин».")
 
 
-@dp.message(F.content_type == ContentType.WEB_APP_DATA)
-async def handle_webapp_order(message: Message) -> None:
+
+def load_catalog() -> dict:
+    with CATALOG_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@dp.message(F.web_app_data)
+async def on_webapp_order(message: Message) -> None:
     """
-    Получает заказ из WebApp (message.web_app_data.data),
-    собирает позиции и отправляет инвойс пользователю.
-    Ожидаемый формат данных от WebApp:
-    {
-        "items": [
-            {"id": "dried_apricots", "name": "Курага", "qty": 2},
-            {"id": "walnuts", "name": "Грецкий орех", "qty": 1}
-        ]
-    }
+    Получает заказ из WebApp.
+    WebApp передаёт ТОЛЬКО id и qty.
+    Цены и названия подтягиваются из catalog.json.
     """
     raw = message.web_app_data.data
+    print("[LOG] WEB_APP_DATA:", raw)
+    await message.answer(f"[DEBUG] web_app_data пришло: {raw[:500]}")
+
     try:
-        order = json.loads(raw)
+        payload = json.loads(raw)
     except json.JSONDecodeError:
-        await message.answer("Не удалось разобрать данные заказа 😕")
+        await message.answer("❌ Ошибка данных заказа.")
         return
 
-    items = order.get("items", [])
+    items = payload.get("items", [])
     if not items:
-        await message.answer("Корзина пуста, заказ не сформирован.")
+        await message.answer("Корзина пуста.")
         return
+
+    catalog = load_catalog()
 
     prices: list[LabeledPrice] = []
-    total = 0
+    total_kopeks = 0
 
     for item in items:
-        item_id = item.get("id")
-        name = item.get("name", "Товар")
+        product_id = item.get("id")
         qty = int(item.get("qty", 0))
 
-        if not item_id or qty <= 0:
+        if qty <= 0 or product_id not in catalog:
             continue
 
-        unit_price = PRICE_TABLE.get(item_id)
-        if unit_price is None:
-            # Если из WebApp пришёл неизвестный id — пропускаем
-            continue
+        product = catalog[product_id]
+        name = product["name"]
+        price_uah = float(product["price_uah_per_100g"])
+        price_kopeks = int(price_uah * 100)
 
-        amount = unit_price * qty
-        prices.append(LabeledPrice(label=f"{name} x{qty}", amount=amount))
-        total += amount
+        amount = price_kopeks * qty
+        total_kopeks += amount
 
-    if not prices:
-        await message.answer("Не удалось собрать позиции заказа.")
+        prices.append(
+            LabeledPrice(
+                label=f"{name} × {qty}",
+                amount=amount,
+            )
+        )
+
+    if not prices or total_kopeks <= 0:
+        await message.answer("❌ Не удалось сформировать заказ.")
         return
 
-    # Отправляем инвойс
-    await message.bot.send_invoice(
-        chat_id=message.chat.id,
+    await message.answer_invoice(
         title="Заказ: сухофрукты и орехи",
-        description="Оплата заказа из мини-магазина.",
-        payload=json.dumps(order),  # любые данные, вернутся в successful_payment
+        description="Оплата заказа",
+        payload="order_v1",
         provider_token=PAYMENT_PROVIDER_TOKEN,
         currency="UAH",
         prices=prices,
-        max_tip_amount=0,
-        need_name=True,
-        need_phone_number=True,
-        need_email=False,
-        need_shipping_address=False,
-        is_flexible=False,
     )
 
 
@@ -146,27 +164,48 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery, bot: Bot) -
 
 @dp.message(F.successful_payment)
 async def successful_payment_handler(message: Message) -> None:
-    """
-    Обработка успешной оплаты.
-    Здесь можно записать заказ в БД, отправить уведомление себе и т.п.
-    """
     payment: SuccessfulPayment = message.successful_payment
     total_uah = payment.total_amount / 100
+
+    session_id = uuid.uuid4().hex
+    web_url = f"{WEBAPP_URL}?session={session_id}&clear_cart=1&v=2"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="Вернуться в магазин",
+            web_app=WebAppInfo(url=web_url),
+        )
+    ]])
+
 
     await message.answer(
         f"✅ Оплата прошла успешно!\n"
         f"Сумма: <b>{total_uah:.2f} UAH</b>\n"
         f"Спасибо за заказ 🙌",
         parse_mode=ParseMode.HTML,
+        reply_markup=kb,
     )
-
 
 async def main() -> None:
     """
     Точка входа: создаёт бота и запускает long polling.
     """
-    bot = Bot(BOT_TOKEN)
-    await dp.start_polling(bot)
+    t2 = time.perf_counter()
+    print(f"[LOG] Before Bot(): {t2:.6f}, delta={t2 - t1:.6f}")
+
+    session = IPv4AiohttpSession()
+
+    bot = Bot(BOT_TOKEN, session=session)
+
+    t3 = time.perf_counter()
+    print(f"[LOG] After Bot(): {t3:.6f}, delta={t3 - t2:.6f}")
+
+    t4 = time.perf_counter()
+    print(f"[LOG] Before start_polling: {t4:.6f}, delta={t4 - t3:.6f}")
+
+    print("[LOG] Polling is starting now. Bot should be ONLINE.")
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    print("[LOG] Polling stopped (this should not happen under normal run).")
 
 
 if __name__ == "__main__":
