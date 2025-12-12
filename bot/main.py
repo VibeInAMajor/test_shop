@@ -153,6 +153,11 @@ async def on_webapp_order(message: Message) -> None:
     )
 
 
+@dp.message(F.content_type == ContentType.WEB_APP_DATA)
+async def on_webapp_order_ct(message: Message) -> None:
+    raw = message.web_app_data.data
+    await message.answer(f"[DEBUG-CT] web_app_data пришло: {raw[:200]}")
+
 @dp.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery, bot: Bot) -> None:
     """
@@ -204,7 +209,7 @@ async def main() -> None:
     print(f"[LOG] Before start_polling: {t4:.6f}, delta={t4 - t3:.6f}")
 
     print("[LOG] Polling is starting now. Bot should be ONLINE.")
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    await dp.start_polling(bot)
     print("[LOG] Polling stopped (this should not happen under normal run).")
 
 
