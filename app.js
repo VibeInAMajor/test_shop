@@ -24,7 +24,7 @@ const products = [
     cat: "dried",
     name: "Курага",
     price: 150,
-    image: "https://sunnyfruit.uz/wp-content/uploads/2023/07/kuraga-subhona-2.jpg"
+    image: "https://wowfoods.com.ua/media/catalog/product/cache/2/image/580x580/9df78eab33525d08d6e5fb8d27136e95/k/u/kuraga-aromatnaja-dzhambo-natural-naja_1.png"
   },
   { 
     id: "prunes",
@@ -54,6 +54,40 @@ const products = [
 
 // корзина: {id: {id, name, price, qty}}
 const cart = {};
+
+const CART_KEY = "shop_cart_v1";
+
+function saveCart() {
+  try {
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+  } catch (e) {
+    console.warn("Cannot save cart:", e);
+  }
+}
+
+function loadCart() {
+  try {
+    const raw = localStorage.getItem(CART_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      Object.keys(parsed).forEach((k) => (cart[k] = parsed[k]));
+    }
+  } catch (e) {
+    console.warn("Cannot load cart:", e);
+  }
+}
+
+function clearCart() {
+  Object.keys(cart).forEach((k) => delete cart[k]);
+  try { localStorage.removeItem(CART_KEY); } catch (_) {}
+}
+
+function getQueryParam(name) {
+  const u = new URL(window.location.href);
+  return u.searchParams.get(name);
+}
+
 
 let currentCategory = "dried";
 
@@ -157,6 +191,7 @@ function changeQty(product, delta, qtyEl) {
 
   qtyEl.textContent = next;
   recalcCart();
+  saveCart();
 }
 
 function recalcCart() {
@@ -190,10 +225,16 @@ checkoutBtn.addEventListener("click", () => {
   };
 
   // Отправляем данные боту и закрываем WebApp
+  saveCart();
   tg.sendData(JSON.stringify(order));
   tg.close();
 });
 
 // первичная отрисовка
+if (getQueryParam("clear_cart") === "1") {
+  clearCart();
+}
+
+loadCart();
 renderProducts();
 recalcCart();
