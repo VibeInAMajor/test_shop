@@ -37,7 +37,7 @@ const products = [
     cat: "dried",
     name: "Чернослив",
     price: 130,
-    image: "https://www.health.com/thmb/JfE0LV8fixMcLsy61T335cYU2H4=/750x0/filters:no_upscale():max_bytes(150000):strip_icc():format(webp)/Health-GettyImages-600154290-c6f81c4c8bf341189ea3af56e7be9722.jpg"
+    image: "https://ayoubs.ca/cdn/shop/products/Prune_wecompress.com.png"
   },
 
   // Орехи
@@ -46,7 +46,7 @@ const products = [
     cat: "nuts",
     name: "Грецкий орех",
     price: 200,
-    image: "https://static.https://assets.unileversolutions.com/v1/1507166.png-cdn.com/images/products/1/269/528622885/grecki.jpg"
+    image: "https://assets.unileversolutions.com/v1/1507166.png"
   },
   { 
     id: "almonds",
