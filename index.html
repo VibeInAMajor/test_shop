@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Reflective Artifact</title>
+
+  <!-- Telegram Mini App helper (не обязателен, но полезен) -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    #app { width: 100%; height: 100%; }
+    .hint {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      font-size: 12px;
+      letter-spacing: 0.2px;
+      color: rgba(255,255,255,0.65);
+      user-select: none;
+      pointer-events: none;
+    }
+    .audio {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.10);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      font-size: 12px;
+      color: rgba(255,255,255,0.75);
+    }
+    .audio button {
+      all: unset;
+      cursor: pointer;
+      padding: 6px 10px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.14);
+    }
+    .audio button:active { transform: scale(0.98); }
+  </style>
+</head>
+
+<body>
+  <canvas id="app"></canvas>
+
+  <div class="hint">Проведи пальцем — вращай. Двумя пальцами — зум.</div>
+
+  <div class="audio">
+    <span id="audioStatus">Sound: off</span>
+    <button id="audioBtn">Play</button>
+  </div>
+
+  <audio id="bgAudio" loop preload="auto" crossorigin="anonymous">
+    <!-- Положи рядом с index.html свой файл: audio.m4a (любой медитативный / лаунж) -->
+    <source src="./audio.m4a" type="audio/mp4" />
+  </audio>
+
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/controls/OrbitControls.js";
+    import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/environments/RoomEnvironment.js";
+
+    // Telegram Mini App: делаем фон прозрачным/темным, расширяемся
+    try {
+      const tg = window.Telegram?.WebApp;
+      if (tg) {
+        tg.ready();
+        tg.expand();
+        tg.setHeaderColor?.("#000000");
+        tg.setBackgroundColor?.("#000000");
+      }
+    } catch {}
+
+    const canvas = document.getElementById("app");
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+
+    const scene = new THREE.Scene();
+
+    // Камера
+    const camera = new THREE.PerspectiveCamera(
+      45,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      50
+    );
+    camera.position.set(0.0, 0.35, 3.2);
+
+    // Управление
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.rotateSpeed = 0.55;
+    controls.zoomSpeed = 0.7;
+    controls.minDistance = 1.8;
+    controls.maxDistance = 5.0;
+    controls.enablePan = false;
+
+    // Свет: мягкий ключ + контровой (но главный “вау” будет от окружения)
+    const key = new THREE.DirectionalLight(0xffffff, 1.15);
+    key.position.set(3, 4, 2);
+    scene.add(key);
+
+    const rim = new THREE.DirectionalLight(0xffffff, 0.55);
+    rim.position.set(-4, 2, -2);
+    scene.add(rim);
+
+    // Окружение для реалистичных отражений (PMREM)
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envScene = new RoomEnvironment();
+    const envTex = pmrem.fromScene(envScene, 0.04).texture;
+    scene.environment = envTex;
+
+    // Фон: темный градиент (не картинка — чистая “сцена”)
+    // Делается как большой “небесный” купол с шейдером-псевдо-градиентом
+    const bgGeo = new THREE.SphereGeometry(20, 32, 32);
+    const bgMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      uniforms: {
+        top: { value: new THREE.Color(0x07070a) },
+        mid: { value: new THREE.Color(0x05050a) },
+        bot: { value: new THREE.Color(0x000000) }
+      },
+      vertexShader: `
+        varying vec3 vPos;
+        void main(){
+          vPos = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vPos;
+        uniform vec3 top;
+        uniform vec3 mid;
+        uniform vec3 bot;
+
+        void main(){
+          float h = normalize(vPos).y * 0.5 + 0.5;
+          vec3 col = mix(bot, mid, smoothstep(0.0, 0.55, h));
+          col = mix(col, top, smoothstep(0.55, 1.0, h));
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+    const bg = new THREE.Mesh(bgGeo, bgMat);
+    scene.add(bg);
+
+    // Геометрия “почти куба”: Box + subdivision + легкая деформация
+    // Это не настоящий “скульпт”, но выглядит как polished imperfect artifact.
+    function makeImperfectCube(size = 1.05, segments = 28) {
+      const geo = new THREE.BoxGeometry(size, size, size, segments, segments, segments);
+
+      // Скругление: притягиваем вершины к сфере слегка, но оставляем "кубность"
+      // + шум по нормали для неровности граней
+      const pos = geo.attributes.position;
+      const v = new THREE.Vector3();
+      const n = new THREE.Vector3();
+
+      // Небольшой "procedural noise" без сторонних библиотек
+      function hash(x, y, z) {
+        // простая детерминированная псевдослучайность
+        return (Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453) % 1;
+      }
+      function smoothNoise(x, y, z) {
+        const h = hash(x, y, z);
+        return h - Math.floor(h);
+      }
+
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+
+        // Нормаль "кубовая": направление от центра
+        n.copy(v).normalize();
+
+        // Кубность: чем ближе к ребрам/углам — тем сильнее "сферизация"
+        const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+        const edgeFactor = 1.0 - Math.max(ax, ay, az); // 0 на гранях, больше на ребрах/углах
+
+        // Сферизация: притягиваем к сфере чуть сильнее на ребрах/углах
+        const spherePull = 0.22 + edgeFactor * 0.22;
+        const target = n.clone().multiplyScalar(size * 0.62); // "сфера" поменьше
+
+        v.lerp(target, spherePull);
+
+        // Микро-деформация: очень аккуратно, чтобы остаться "полированным"
+        const noise = smoothNoise(v.x * 3.2, v.y * 3.2, v.z * 3.2);
+        const bump = (noise - 0.5) * 0.035;
+        v.addScaledVector(n, bump);
+
+        pos.setXYZ(i, v.x, v.y, v.z);
+      }
+
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    const cubeGeo = makeImperfectCube();
+
+    // Материал: "polished metal / glassy lacquer"
+    const cubeMat = new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(0x8f97a6),
+      metalness: 1.0,
+      roughness: 0.06,
+      reflectivity: 0.95,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.03,
+      sheen: 0.0,
+      transmission: 0.0,     // если хочешь "стекло" — включим, но тогда другой стиль
+      ior: 1.5
+    });
+
+    const cube = new THREE.Mesh(cubeGeo, cubeMat);
+    cube.position.set(0, 0.05, 0);
+    scene.add(cube);
+
+    // "Подиум" — чтобы блики читались, но без лишней сцены
+    const floorGeo = new THREE.CircleGeometry(2.6, 80);
+    const floorMat = new THREE.MeshStandardMaterial({
+      color: 0x050507,
+      metalness: 0.0,
+      roughness: 0.95
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.85;
+    scene.add(floor);
+
+    // Очень слабый туман для глубины
+    scene.fog = new THREE.FogExp2(0x000000, 0.06);
+
+    // Аудио: автозапуск на iOS нельзя, поэтому кнопка
+    const bgAudio = document.getElementById("bgAudio");
+    const audioBtn = document.getElementById("audioBtn");
+    const audioStatus = document.getElementById("audioStatus");
+
+    let audioOn = false;
+    async function toggleAudio() {
+      try {
+        if (!audioOn) {
+          await bgAudio.play();
+          audioOn = true;
+          audioStatus.textContent = "Sound: on";
+          audioBtn.textContent = "Pause";
+        } else {
+          bgAudio.pause();
+          audioOn = false;
+          audioStatus.textContent = "Sound: off";
+          audioBtn.textContent = "Play";
+        }
+      } catch (e) {
+        audioStatus.textContent = "Sound: blocked";
+      }
+    }
+    audioBtn.addEventListener("click", toggleAudio);
+
+    // Чуть "живости": очень медленное авто-дыхание, если пользователь не трогает
+    let lastInteraction = performance.now();
+    const markInteraction = () => (lastInteraction = performance.now());
+    window.addEventListener("pointerdown", markInteraction, { passive: true });
+    window.addEventListener("pointermove", markInteraction, { passive: true });
+    window.addEventListener("wheel", markInteraction, { passive: true });
+
+    // Resize
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Render loop
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+
+      // Если пользователь не трогал — лёгкое дыхание/поворот
+      const idle = (performance.now() - lastInteraction) > 1800;
+      if (idle) {
+        cube.rotation.y += 0.0024;
+        cube.rotation.x = Math.sin(t * 0.35) * 0.06;
+      }
+
+      controls.update();
+
+      // Едва-едва меняем экспозицию, создавая "живой" свет
+      renderer.toneMappingExposure = 1.02 + Math.sin(t * 0.25) * 0.03;
+
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
